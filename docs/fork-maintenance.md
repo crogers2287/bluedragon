@@ -3,6 +3,9 @@
 This fork installs on comma devices from the `comma3x` branch. Keep `comma3x`
 stable and only promote it after `bp-dev` has been reviewed and tested.
 
+For the feature inventory that should be preserved during upstream syncs, see
+[`blue-dragon-feature-set.md`](blue-dragon-feature-set.md).
+
 ## Branch roles
 
 - `upstream/bp-dev`: BluePilot upstream from `BluePilotDev/bluepilot`.

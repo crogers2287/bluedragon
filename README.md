@@ -1,5 +1,16 @@
 ![](https://user-images.githubusercontent.com/47793918/233812617-beab2e71-57b9-479e-8bff-c3931347ca40.png)
 
+## Blue Dragon fork
+
+Blue Dragon is a personal comma 3X install fork built on BluePilot, SunnyPilot,
+and openpilot. It installs from `crogers2287/bluedragon:comma3x`, keeps
+BluePilot's Ford-focused controls/UI/portal feature set, and adds a small
+driver-monitoring QoL patch plus automation for syncing future BluePilot
+releases into this fork.
+
+See [`docs/blue-dragon-feature-set.md`](docs/blue-dragon-feature-set.md) for
+the feature inventory and upstream-sync checklist.
+
 ## 🌞 What is sunnypilot?
 [sunnypilot](https://github.com/sunnyhaibin/sunnypilot) is a fork of comma.ai's openpilot, an open source driver assistance system. sunnypilot offers the user a unique driving experience for over 300+ supported car makes and models with modified behaviors of driving assist engagements. sunnypilot complies with comma.ai's safety rules as accurately as possible.
 
