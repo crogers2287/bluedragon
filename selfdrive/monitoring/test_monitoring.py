@@ -249,12 +249,10 @@ def test_run_step_engagement(selfdrive_enabled, lat_active, steering, gas,
   sm = _build_sm(selfdrive_enabled, lat_active, steering, gas)
   dm = DriverMonitoring()
   captured = {}
-  orig = dm._update_events
 
-  def spy(driver_engaged, op_engaged, standstill, wrong_gear):
+  def spy(driver_engaged, op_engaged, standstill, wrong_gear, car_speed=0.):
     captured['driver_engaged'] = driver_engaged
     captured['op_engaged'] = op_engaged
-    return orig(driver_engaged, op_engaged, standstill, wrong_gear)
 
   dm._update_events = spy
   dm.run_step(sm, demo=False)

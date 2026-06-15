@@ -42,7 +42,12 @@ def dmonitoringd_thread():
     if (sm['driverStateV2'].frameId % 6000 == 0 and not demo_mode and
      DM.wheelpos_offsetter.filtered_stat.n > DM.settings._WHEELPOS_FILTER_MIN_COUNT and
      DM.wheel_on_right == (DM.wheelpos_offsetter.filtered_stat.M > DM.settings._WHEELPOS_THRESHOLD)):
-      params.put_bool("IsRhdDetected", DM.wheel_on_right)
+      params.put_bool_nonblocking("IsRhdDetected", DM.wheel_on_right)  # BluePilot: cherry-picked from dragonpilot - use nonblocking for realtime thread
+
+    # BluePilot: cherry-picked from dragonpilot - offroad alert for uncertain driver monitoring
+    if DM.dcam_uncertain_cnt > DM.settings._DCAM_UNCERTAIN_ALERT_COUNT and not DM.dcam_uncertain_alerted:
+      params.put_bool("Offroad_DriverMonitoringUncertain", True)
+      DM.dcam_uncertain_alerted = True
 
 def main():
   dmonitoringd_thread()

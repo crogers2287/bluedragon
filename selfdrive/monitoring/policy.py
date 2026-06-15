@@ -44,6 +44,9 @@ class DRIVER_MONITOR_SETTINGS:
     self._SG_THRESHOLD = 0.9
     self._BLINK_THRESHOLD = 0.865
     self._PHONE_THRESH = 0.5
+    self._PHONE_THRESH2 = 15.0  # BluePilot: cherry-picked from dragonpilot - calibrated phone detection multiplier
+    self._PHONE_MAX_OFFSET = 0.06  # BluePilot: cherry-picked from dragonpilot - max phone prob calibration offset
+    self._PHONE_MIN_OFFSET = 0.025  # BluePilot: cherry-picked from dragonpilot - min phone prob calibration offset
     self._POSE_PITCH_THRESHOLD = 0.3133
     self._POSE_PITCH_THRESHOLD_SLACK = 0.3237
     self._POSE_PITCH_THRESHOLD_STRICT = self._POSE_PITCH_THRESHOLD
@@ -65,10 +68,11 @@ class DRIVER_MONITOR_SETTINGS:
 
     self._DCAM_UNCERTAIN_ALERT_THRESHOLD = 0.1
     self._DCAM_UNCERTAIN_ALERT_COUNT = int(60  / DT_DMON)
-    self._DCAM_UNCERTAIN_RESET_COUNT = int(2  / DT_DMON)
+    self._DCAM_UNCERTAIN_RESET_COUNT = int(20 / DT_DMON)  # BluePilot: from dragonpilot (was int(2/DT)~2s, too aggressive)
     self._HI_STD_THRESHOLD = 0.3
     self._HI_STD_FALLBACK_TIME = int(10  / DT_DMON)  # fall back to wheel touch if model is uncertain for 10s
     self._DISTRACTED_FILTER_TS = 0.25  # 0.6Hz
+    self._ALWAYS_ON_ALERT_MIN_SPEED = 11  # BluePilot: cherry-picked from dragonpilot - low-speed exemption threshold for always-on alerts (m/s, ~25 mph)
 
     self._POSE_CALIB_MIN_SPEED = 13  # 30 mph
     self._POSE_OFFSET_MIN_COUNT = int(60 / DT_DMON)  # valid data counts before calibration completes, 1min cumulative
@@ -154,6 +158,11 @@ class DriverMonitoring:
     self.dcam_uncertain_cnt = 0
     self.dcam_reset_cnt = 0
     self.too_distracted = Params().get_bool("DriverTooDistracted")
+    # BluePilot: cherry-picked from dragonpilot - calibrated phone prob detection
+    self.phone_prob_calibrated = False
+    self.phone_offsetter = RunningStatFilter(max_trackable=self.settings._POSE_OFFSET_MAX_COUNT)
+    # BluePilot: cherry-picked from dragonpilot - once-per-drive offroad alert flag
+    self.dcam_uncertain_alerted = False
 
     self._reset_awareness()
     self._set_policy(MonitoringPolicy.vision)
@@ -227,7 +236,14 @@ class DriverMonitoring:
 
     self.distracted_types['pose'] = bool((pitch_error > pitch_threshold) or (yaw_error > yaw_threshold))
     self.distracted_types['eye'] = bool((self.blink.left + self.blink.right)*0.5 > self.settings._BLINK_THRESHOLD)
-    self.distracted_types['phone'] = bool(self.phone_prob > self.settings._PHONE_THRESH)
+    if self.phone_prob_calibrated:  # BluePilot: cherry-picked from dragonpilot - calibrated phone detection
+      # BluePilot: cherry-picked from dragonpilot - calibrated phone detection
+      phone_offset = min(self.phone_offsetter.filtered_stat.M, self.settings._PHONE_MAX_OFFSET)
+      phone_offset = max(phone_offset, self.settings._PHONE_MIN_OFFSET)
+      using_phone = self.phone_prob > phone_offset * self.settings._PHONE_THRESH2
+    else:
+      using_phone = self.phone_prob > self.settings._PHONE_THRESH
+    self.distracted_types['phone'] = bool(using_phone)
 
   def _update_states(self, driver_state, cal_rpy, car_speed, op_engaged, standstill, demo_mode=False, steering_angle_deg=0.):
     rhd_pred = driver_state.wheelOnRightProb
@@ -274,9 +290,11 @@ class DriverMonitoring:
     if self.face_detected and car_speed > self.settings._POSE_CALIB_MIN_SPEED and self.pose.low_std and (not op_engaged or not self.driver_distracted):
       self.pose.pitch_offsetter.push_and_update(self.pose.pitch)
       self.pose.yaw_offsetter.push_and_update(self.pose.yaw)
+      self.phone_offsetter.push_and_update(self.phone_prob)  # BluePilot: cherry-picked from dragonpilot
 
     self.pose.calibrated = self.pose.pitch_offsetter.filtered_stat.n >= self.settings._POSE_OFFSET_MIN_COUNT and \
                            self.pose.yaw_offsetter.filtered_stat.n >= self.settings._POSE_OFFSET_MIN_COUNT
+    self.phone_prob_calibrated = self.phone_offsetter.filtered_stat.n >= self.settings._POSE_OFFSET_MIN_COUNT  # BluePilot: cherry-picked from dragonpilot
 
     if self.face_detected and not self.driver_distracted:
       dcam_uncertain = self.model_std_max > self.settings._DCAM_UNCERTAIN_ALERT_THRESHOLD
@@ -295,7 +313,7 @@ class DriverMonitoring:
     elif self.face_detected and self.pose.low_std:
       self.hi_stds = 0
 
-  def _update_events(self, driver_engaged, op_engaged, standstill, wrong_gear):
+  def _update_events(self, driver_engaged, op_engaged, standstill, wrong_gear, car_speed=0.):
     self.alert_level = AlertLevel.none
     self.driver_interacting = driver_engaged
 
@@ -316,6 +334,7 @@ class DriverMonitoring:
     _reaching_alert_3 = self.awareness - self.step_change <= 0
     standstill_exemption = standstill and _reaching_alert_1
     always_on_exemption = always_on_valid and not op_engaged and _reaching_alert_3
+    always_on_lowspeed_exemption = always_on_valid and not op_engaged and car_speed < self.settings._ALWAYS_ON_ALERT_MIN_SPEED  # BluePilot: from dragonpilot
 
     if self.awareness > 0 and \
        ((self.driver_distraction_filter.x < 0.37 and self.face_detected and self.pose.low_std) or standstill_exemption):
@@ -335,9 +354,9 @@ class DriverMonitoring:
     maybe_distracted = self.is_model_uncertain or not self.face_detected
 
     if certainly_distracted or maybe_distracted:
-      # should always be counting if distracted unless at standstill and reaching green
-      # also will not be reaching 0 if DM is active when not engaged
-      if not (standstill_exemption or always_on_exemption):
+      # BluePilot: cherry-picked from dragonpilot - low-speed exemption also suppresses awareness decrement at orange
+      _reaching_alert_1_orange = self.awareness - self.step_change <= self.threshold_alert_1
+      if not (standstill_exemption or always_on_exemption or (always_on_lowspeed_exemption and _reaching_alert_1_orange)):
         self.awareness = max(self.awareness - self.step_change, -0.1)
 
     if self.awareness <= 0.:
@@ -348,7 +367,7 @@ class DriverMonitoring:
         self.terminal_alert_cnt += 1
     elif self.awareness <= self.threshold_alert_2:
       self.alert_level = AlertLevel.two
-    elif self.awareness <= self.threshold_alert_1:
+    elif self.awareness <= self.threshold_alert_1 and not always_on_lowspeed_exemption:  # BluePilot: from dragonpilot
       self.alert_level = AlertLevel.one
 
   def get_state_packet(self, valid=True):
@@ -432,4 +451,5 @@ class DriverMonitoring:
       op_engaged=enabled,
       standstill=standstill,
       wrong_gear=wrong_gear,
+      car_speed=car_speed,  # BluePilot: cherry-picked from dragonpilot
     )
