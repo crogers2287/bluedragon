@@ -1,0 +1,29 @@
+name: Promote comma3x install branch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-comma3x
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Fast-forward comma3x to bp-dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout bp-dev
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: bp-dev
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote install branch
+        run: |
+          git fetch origin bp-dev comma3x || true
+          git switch -C comma3x origin/bp-dev
+          git push origin comma3x

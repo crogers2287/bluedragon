@@ -1,0 +1,84 @@
+name: Sync BluePilot upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 10 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-bluepilot-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: BluePilotDev/bluepilot
+  UPSTREAM_BRANCH: bp-dev
+  BASE_BRANCH: bp-dev
+  SYNC_BRANCH: sync/bluepilot-bp-dev
+
+jobs:
+  sync:
+    name: Open upstream sync PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ env.BASE_BRANCH }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config rerere.enabled true
+
+      - name: Merge upstream branch
+        id: merge
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream "${UPSTREAM_BRANCH}"
+          git switch -C "${SYNC_BRANCH}" "origin/${BASE_BRANCH}"
+
+          if ! git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+            echo "::error::BluePilot upstream merge has conflicts. Resolve locally, then push ${BASE_BRANCH}."
+            git status --short
+            exit 1
+          fi
+
+          if git diff --quiet "origin/${BASE_BRANCH}" HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push sync branch
+        if: steps.merge.outputs.changed == 'true'
+        run: git push --force-with-lease origin "${SYNC_BRANCH}"
+
+      - name: Open or update PR
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="Sync BluePilot ${UPSTREAM_BRANCH} into ${BASE_BRANCH}"
+          body="$(cat <<BODY
+          Automated merge of \`${UPSTREAM_REPO}:${UPSTREAM_BRANCH}\` into this fork's \`${BASE_BRANCH}\`.
+
+          Review and test this PR before promoting \`comma3x\`. The comma install branch is intentionally not updated by this workflow.
+          BODY
+          )"
+
+          if gh pr view "${SYNC_BRANCH}" --json number >/dev/null 2>&1; then
+            gh pr edit "${SYNC_BRANCH}" --title "$title" --body "$body"
+          else
+            gh pr create --base "${BASE_BRANCH}" --head "${SYNC_BRANCH}" --title "$title" --body "$body"
+          fi
+
+      - name: No upstream changes
+        if: steps.merge.outputs.changed == 'false'
+        run: echo "No changes to sync from ${UPSTREAM_REPO}:${UPSTREAM_BRANCH}."
