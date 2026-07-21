@@ -226,16 +226,12 @@ static MADSState *get_mads_state(void) {
   return &m_mads_state;
 }
 
-bool get_lat_active(void){
-  return is_lat_active();
+bool get_controls_allowed_lateral(void){
+  return controls_allowed_lateral;
 }
 
-bool get_controls_allowed_lat(void){
-  return mads_is_lateral_control_allowed_by_mads();
-}
-
-bool get_controls_requested_lat(void){
-  return get_mads_state()->controls_requested_lat;
+bool get_controls_requested_lateral(void){
+  return get_mads_state()->controls_requested_lateral;
 }
 
 bool get_enable_mads(void){
@@ -262,6 +258,28 @@ uint16_t get_current_safety_param_sp(void){
   return current_safety_param_sp;
 }
 
+// BluePilot: debug getters for the Ford pinion geometry table (ALLOW_DEBUG builds only).
+// Consumed by test_ford.py's geometry-consistency test, which compares every firmware row
+// against CarSpecs + calc_slip_factor(VehicleModel(CP)) so the table cannot rot as
+// platforms change -- without fragile header parsing.
+#ifdef ALLOW_DEBUG
+int get_ford_pinion_geometry_count(void){
+  return (int)FORD_PINION_GEOMETRY_COUNT;
+}
+
+float get_ford_pinion_geometry_slip_factor(int idx){
+  return ((idx >= 0) && (idx <= (int)FORD_PINION_GEOMETRY_COUNT)) ? ford_pinion_geometry[idx].slip_factor : 0.0f;
+}
+
+float get_ford_pinion_geometry_steer_ratio(int idx){
+  return ((idx >= 0) && (idx <= (int)FORD_PINION_GEOMETRY_COUNT)) ? ford_pinion_geometry[idx].steer_ratio : 0.0f;
+}
+
+float get_ford_pinion_geometry_wheelbase(int idx){
+  return ((idx >= 0) && (idx <= (int)FORD_PINION_GEOMETRY_COUNT)) ? ford_pinion_geometry[idx].wheelbase : 0.0f;
+}
+#endif
+
 void set_mads_button_press(int c){
   mads_button_press = c;
 }
@@ -270,8 +288,8 @@ int get_mads_button_press(void){
   return mads_button_press;
 }
 
-void set_controls_allowed_lat(bool c){
-  m_mads_state.controls_allowed_lat = c;
+void set_controls_allowed_lateral(bool c){
+  controls_allowed_lateral = c;
 }
 
 bool get_mads_acc_main(void){
@@ -286,8 +304,16 @@ void mads_set_current_disengage_reason(int reason) {
   m_mads_state.current_disengage.active_reason = reason;
 }
 
-void set_controls_requested_lat(bool c){
-  m_mads_state.controls_requested_lat = c;
+void set_controls_requested_lateral(bool c){
+  m_mads_state.controls_requested_lateral = c;
+}
+
+void mads_apply_alternative_experience(int mode){
+  mads_set_alternative_experience(&mode);
+}
+
+void tick_mads_state(bool vm, bool acc_main, bool op_allowed, bool braking, bool steering_disengage){
+  mads_state_update(vm, acc_main, op_allowed, braking, steering_disengage);
 }
 
 void set_mads_params(bool enable_mads, bool disengage_lateral_on_brake, bool pause_lateral_on_brake){

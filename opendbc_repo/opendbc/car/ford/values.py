@@ -175,6 +175,10 @@ class CAR(Platforms):
     [FordCarDocs("Ford Focus 2018-22", "Adaptive Cruise Control with Lane Centering", footnotes=[Footnote.FOCUS], hybrid=True)],  # mHEV only
     CarSpecs(mass=1350, wheelbase=2.7, steerRatio=15.0),
   )
+  FORD_MONDEO_MK5 = FordCANFDPlatformConfig(
+    [FordCarDocs("Ford Mondeo 2014-2022", "Adaptive Cruise Control with Lane Centering")],
+    CarSpecs(mass=1550, wheelbase=2.85, steerRatio=14.8),
+  )
   FORD_MAVERICK_MK1 = FordPlatformConfig(
     [
       FordCarDocs("Ford Maverick 2022", "LARIAT Luxury", hybrid=True),
@@ -326,7 +330,7 @@ FW_QUERY_CONFIG = FwQueryConfig(
   # non-essential for MK1 so the missing Ford-tagged matching-eligible EPS
   # response doesn't block matching. The unique TL38-2D053-AD (ABS) +
   # RB5T-14D049-AB (radar) FWs still identify MK1 cleanly.
-  non_essential_ecus={Ecu.eps: [CAR.FORD_F_150_LIGHTNING_MK1]},
+  non_essential_ecus={Ecu.eps: [CAR.FORD_F_150_LIGHTNING_MK1, CAR.FORD_EXPEDITION_MK4]},
   # Custom fuzzy fingerprinting function using platform and model year hints
   match_fw_to_car_fuzzy=match_fw_to_car_fuzzy,
 )

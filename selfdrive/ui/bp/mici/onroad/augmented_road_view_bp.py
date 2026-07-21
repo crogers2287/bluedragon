@@ -1,25 +1,71 @@
 import time
 import pyray as rl
-from cereal import messaging, car
+from cereal import car
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.selfdrive.ui.mici.onroad import SIDE_PANEL_WIDTH
 from openpilot.selfdrive.ui.mici.onroad.augmented_road_view import AugmentedRoadView
-from openpilot.selfdrive.ui.mici.onroad.cameraview import CameraView
+from openpilot.selfdrive.ui.bp.mici.onroad.cameraview_bp import MiciCameraViewBP
 from openpilot.selfdrive.ui.bp.mici.onroad.model_renderer_bp import ModelRendererBP
 from openpilot.selfdrive.ui.bp.onroad.blindspot_renderer import BlindspotRendererMixin
 from openpilot.selfdrive.ui.bp.mici.onroad.hud_renderer_bp import MiciHudRendererBP
+from openpilot.selfdrive.ui.bp.onroad.driver_state_bp import DriverStateRendererBP
+from openpilot.selfdrive.ui.bp.lib.dm_icon_style import DMIconStyle
 from openpilot.selfdrive.ui.bp.mici.onroad.complication import MiciComplication
 from openpilot.selfdrive.ui.bp.mici.onroad.confidence_ball_bp import ConfidenceBallMiciBP
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.selfdrive.ui.bp.lib.ui_debug_logger import bp_ui_log
+# BluePilot: swipe-down shortcut to lateral debug screen
+from openpilot.selfdrive.ui.bp.mici.onroad.lateral_debug_mici import LateralDebugMici
+from openpilot.selfdrive.ui.bp.mici.onroad.rad_racer_mici import RadRacerThemeMici
+from openpilot.system.ui.widgets import Widget
 
 # BluePilot: Margin to keep confidence ball inside the MICI rounded border
 MICI_BALL_BORDER_MARGIN = 25  # half of 50px MICI border thickness
 
+_SWIPE_DOWN_THRESHOLD = 80  # minimum downward travel (px) to trigger lateral debug
 
-class MiciAugmentedRoadViewBP(AugmentedRoadView, BlindspotRendererMixin):
+
+class _VerticalSwipeDetector(Widget):
+  """Transparent overlay that detects swipe-down gestures.
+
+  Rendered directly inside _render (not via the horizontal Scroller), so it has
+  no scroller touch_valid_callback and _handle_mouse_event fires regardless of
+  whether the scroller entered MANUAL_SCROLL due to minor horizontal drift.
+  Mirrors the BookmarkIcon pattern used for the bookmark swipe.
+  """
+
+  def __init__(self, callback):
+    super().__init__()
+    self._callback = callback
+    self._interacting = False
+    self._press_x = 0.0
+    self._press_y = 0.0
+    self._tracking = False
+
+  def interacting(self) -> bool:
+    interacting, self._interacting = self._interacting, False
+    return interacting
+
+  def _handle_mouse_event(self, mouse_event):
+    if mouse_event.left_pressed:
+      self._press_x = mouse_event.pos.x
+      self._press_y = mouse_event.pos.y
+      self._tracking = True
+    elif mouse_event.left_released and self._tracking:
+      self._tracking = False
+      dy = mouse_event.pos.y - self._press_y
+      dx = abs(mouse_event.pos.x - self._press_x)
+      if dy > _SWIPE_DOWN_THRESHOLD and dy > dx:
+        self._interacting = True
+        self._callback()
+
+  def _render(self, rect):
+    pass  # transparent — visual is handled by parent
+
+
+class MiciAugmentedRoadViewBP(MiciCameraViewBP, AugmentedRoadView, BlindspotRendererMixin):
   """BluePilot MICI AugmentedRoadView with blindspot indicators, BP HUD, and complication."""
 
   BLIND_SPOT_WIDTH = 125  # Narrower for MICI's smaller screen
@@ -28,9 +74,11 @@ class MiciAugmentedRoadViewBP(AugmentedRoadView, BlindspotRendererMixin):
     super().__init__(*args, **kwargs)
     self._init_blindspot()
     self._bp_params = Params()
+    self._fade_alpha_filter = FirstOrderFilter(0, 0.1, 1 / gui_app.target_fps)
 
     # BluePilot: Replace HUD renderer with BP version (brake coloring + powerflow)
     self._hud_renderer = MiciHudRendererBP()
+    self._driver_state_renderer = DriverStateRendererBP(DMIconStyle.COMMA_4)
 
     # BluePilot: Replace confidence ball with BP version on the left (MADS beam + enhanced coloring)
     self._confidence_ball = ConfidenceBallMiciBP()
@@ -39,12 +87,39 @@ class MiciAugmentedRoadViewBP(AugmentedRoadView, BlindspotRendererMixin):
     self._complication = MiciComplication()
 
     self._model_renderer = ModelRendererBP()
+    self._lat_debug: LateralDebugMici | None = None
+    self._swipe_detector = _VerticalSwipeDetector(self._on_swipe_down)
 
-    # BluePilot: TICI uses AugmentedRoadViewSP for this; upstream MICI no longer does — BP _render still fades the overlay.
-    self._fade_alpha_filter = FirstOrderFilter(0, 0.1, 1 / gui_app.target_fps)
+    # BluePilot: Rad Racer 8-bit theme (MICI-scaled; no gauge cluster on the small screen)
+    self._rad_racer_theme = RadRacerThemeMici()
+    self._rad_racer_active = self._bp_params.get_bool("BPRadRacerTheme")
+    self._rad_racer_param_counter = 0
+
+  def _on_swipe_down(self):
+    if not ui_state.is_onroad():
+      return
+    # Guard against double-push. When the car leaves standstill, main.py calls
+    # pop_widgets_to() which dismisses LateralDebugMici without invoking back_callback,
+    # so a bool flag would get stranded True. Checking widget_in_stack() handles that.
+    if self._lat_debug is not None and gui_app.widget_in_stack(self._lat_debug):
+      return
+
+    def _dismiss():
+      self._lat_debug = None
+      gui_app.pop_widget()
+
+    self._lat_debug = LateralDebugMici(back_callback=_dismiss)
+    gui_app.push_widget(self._lat_debug)
+
+  def _handle_mouse_release(self, mouse_pos):
+    # BluePilot: suppress click-to-home when a swipe-down was detected by the detector
+    if not self._swipe_detector.interacting():
+      super()._handle_mouse_release(mouse_pos)
 
   def _render(self, _):
     """Override render to place confidence ball on left, offset driver state, and conditionally hide border."""
+    bp_ui_log.tick()  # refresh BPUIDebugLog enabled state (mirrors TICI; MICI had no tick, so the toggle was inert)
+    start_draw = time.monotonic()
     self._switch_stream_if_needed(ui_state.sm)
     self._update_calibration()
 
@@ -66,11 +141,27 @@ class MiciAugmentedRoadViewBP(AugmentedRoadView, BlindspotRendererMixin):
       int(self._content_rect.height)
     )
 
-    # Render the base camera view
-    CameraView._render(self, self._content_rect)
+    # Render the base camera view. Minimal Driving View suppression lives in MiciCameraViewBP.
+    MiciCameraViewBP._render(self, self._content_rect)
+
+    # BluePilot: Rad Racer theme — refresh cached param (~1s), then sky/skyline/signs behind the road
+    self._rad_racer_param_counter += 1
+    if self._rad_racer_param_counter >= 60:
+      self._rad_racer_param_counter = 0
+      self._rad_racer_active = self._bp_params.get_bool("BPRadRacerTheme")
+    if self._rad_racer_active:
+      self._model_renderer.prepare_projection(self._content_rect)
+      self._rad_racer_theme.render_background(self._content_rect, self._model_renderer)
 
     # Model overlays
     self._model_renderer.render(self._content_rect)
+
+    # BluePilot: Rad Racer sprites (ego + leads) over the road; no gauge cluster on MICI,
+    # so the ego car anchors to the bottom edge of the content rect instead.
+    if self._rad_racer_active:
+      self._rad_racer_theme.render_foreground(
+        self._content_rect, self._model_renderer,
+        self._content_rect.y + self._content_rect.height - 4)
 
     # Fade out bottom overlay (only when engaged)
     fade_alpha = self._fade_alpha_filter.update(ui_state.status != UIStatus.DISENGAGED)
@@ -118,6 +209,9 @@ class MiciAugmentedRoadViewBP(AugmentedRoadView, BlindspotRendererMixin):
 
     # Bookmark icon
     self._bookmark_icon.render(self.rect)
+
+    # BluePilot: swipe-down gesture detector (must render after bookmark icon, same rect)
+    self._swipe_detector.render(self.rect)
 
     # Offroad label
     if not ui_state.started:
