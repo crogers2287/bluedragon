@@ -4,6 +4,8 @@ Blue Dragon is a personal comma 3X install branch built on BluePilot, SunnyPilot
 and openpilot. It keeps BluePilot's Ford-focused feature work while adding a
 small local maintenance layer for safe upstream syncing and install promotion.
 
+**Current upstream base:** BluePilot **bp-7.0** (merged on branch `bd/bp-7.0`).
+
 ## Install branch
 
 Use this branch for the comma device:
@@ -13,7 +15,8 @@ https://github.com/crogers2287/bluedragon.git
 branch: comma3x
 ```
 
-`bp-dev` is the integration branch. `comma3x` is the stable install branch and
+`bp-dev` is the integration branch. `bd/bp-7.0` holds the BluePilot 7.0 merge
+with Blue Dragon patches preserved. `comma3x` is the stable install branch and
 should only be promoted after the integration branch has been reviewed and
 tested.
 
