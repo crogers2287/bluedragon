@@ -57,6 +57,7 @@ sections:
       the Edge (its pinion sensor only reports a relative angle).'
     enablement:
     - $ref: '#/macros/offroad'
+    - $ref: '#/macros/not_ford_edge_mk2'
   # --- Audio ---
   - key: BPUseCustomSounds
     widget: toggle
@@ -302,6 +303,17 @@ sections:
     description: Scales the high-speed steering response in angle mode (0.5-1.5). Default 1.0.
     min: 0.5
     max: 1.5
+    step: 0.01
+    visibility:
+    - type: param
+      key: FordPrefLateralControl
+      equals: 1
+  - key: FordHighSpeedDampening_ang
+    widget: option
+    title: '[Lateral Tuning] High Speed Low Curve Adjustment Factor (Angle)'
+    description: Tune adjustment factor for low curve straightaways (highways) at high speeds. If oversteering, reduce. If understeering, increase
+    min: 0.25
+    max: 1.25
     step: 0.01
     visibility:
     - type: param
